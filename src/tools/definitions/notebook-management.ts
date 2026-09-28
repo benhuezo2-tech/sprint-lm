@@ -101,7 +101,7 @@ export const notebookManagementTools: Tool[] = [
     description:
       "Fetch full metadata for one notebook by id. Use to verify what's " +
       "currently stored before calling `update_notebook`, or to show the " +
-      "user the exact `description`/`topics`/`use_cases` Claude has for it.",
+      "user the exact `description`/`topics`/`use_cases` stored for it.",
     inputSchema: {
       type: "object",
       properties: {

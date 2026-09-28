@@ -44,7 +44,7 @@ import { ResourceHandlers } from "./resources/resource-handlers.js";
 import { SettingsManager } from "./utils/settings-manager.js";
 import { CliHandler } from "./utils/cli-handler.js";
 import { CONFIG, ensureDirectories } from "./config.js";
-import { startHttpTransport } from "./transport/http.js";
+import { startHttpTransport, type HttpTransportHandle } from "./transport/http.js";
 import { log } from "./utils/logger.js";
 
 /**
@@ -139,7 +139,9 @@ function extractProgressToken(
  * Main MCP Server Class
  */
 class NotebookLMMCPServer {
-  private server: Server;
+  /** Live SDK servers: one for stdio, one per session over HTTP. */
+  private servers = new Set<Server>();
+  private httpTransport?: HttpTransportHandle;
   private authManager: AuthManager;
   private sessionManager: SessionManager;
   private library: NotebookLibrary;
@@ -149,28 +151,6 @@ class NotebookLMMCPServer {
   private toolDefinitions: Tool[];
 
   constructor() {
-    // Initialize MCP Server
-    this.server = new Server(
-      {
-        name: "notebooklm-mcp",
-        version: "2.0.0",
-      },
-      {
-        capabilities: {
-          tools: {},
-          resources: {},
-          resourceTemplates: {},
-          prompts: {},
-          completions: {}, // Required for completion/complete support
-          logging: {},
-        },
-        // MCP-spec server instructions (clients merge into the system prompt).
-        // Use these for cross-tool workflow guidance — do not duplicate
-        // information that already lives in individual tool descriptions.
-        instructions: SERVER_INSTRUCTIONS,
-      }
-    );
-
     // Initialize managers
     this.authManager = new AuthManager();
     this.sessionManager = new SessionManager(this.authManager);
@@ -185,8 +165,6 @@ class NotebookLMMCPServer {
     const allTools = buildToolDefinitions(this.library) as Tool[];
     this.toolDefinitions = this.settingsManager.filterTools(allTools);
 
-    // Setup handlers
-    this.setupHandlers();
     this.setupShutdownHandlers();
 
     const activeSettings = this.settingsManager.getEffectiveSettings();
@@ -198,14 +176,51 @@ class NotebookLMMCPServer {
   }
 
   /**
+   * Build an SDK `Server` wired to the shared managers.
+   *
+   * The SDK answers each request through whichever transport the Server was
+   * connected to last, so one instance must never serve two HTTP sessions —
+   * the older session's requests would hang (ChatGPT opens several). Browser
+   * sessions, auth state and the library stay shared across instances.
+   */
+  private createMcpServer(): Server {
+    const server = new Server(
+      {
+        name: "notebooklm-mcp",
+        version: "2.0.0",
+      },
+      {
+        capabilities: {
+          tools: {},
+          resources: {},
+          resourceTemplates: {},
+          completions: {}, // Required for completion/complete support
+          logging: {},
+        },
+        // MCP-spec server instructions (clients merge into the system prompt).
+        // Use these for cross-tool workflow guidance — do not duplicate
+        // information that already lives in individual tool descriptions.
+        instructions: SERVER_INSTRUCTIONS,
+      }
+    );
+
+    this.setupHandlers(server);
+    this.servers.add(server);
+    server.onclose = () => {
+      this.servers.delete(server);
+    };
+    return server;
+  }
+
+  /**
    * Setup MCP request handlers
    */
-  private setupHandlers(): void {
+  private setupHandlers(server: Server): void {
     // Register Resource Handlers (Resources, Templates, Completions)
-    this.resourceHandlers.registerHandlers(this.server);
+    this.resourceHandlers.registerHandlers(server);
 
     // List available tools
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    server.setRequestHandler(ListToolsRequestSchema, async () => {
       log.info("📋 [MCP] list_tools request received");
       return {
         tools: this.toolDefinitions,
@@ -213,19 +228,20 @@ class NotebookLMMCPServer {
     });
 
     // Handle tool calls
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const { name, arguments: args } = request.params;
-      const progressToken = extractProgressToken(args);
+      // Spec location is `params._meta`; `arguments._meta` kept as a fallback.
+      const progressToken = request.params._meta?.progressToken ?? extractProgressToken(args);
 
       log.info(`🔧 [MCP] Tool call: ${name}`);
-      if (progressToken) {
+      if (progressToken !== undefined) {
         log.info(`  📊 Progress token: ${progressToken}`);
       }
 
-      // Create progress callback function
+      // Progress rides the calling request's stream, so it reaches the right session.
       const sendProgress = async (message: string, progress?: number, total?: number) => {
-        if (progressToken) {
-          await this.server.notification({
+        if (progressToken !== undefined) {
+          await extra.sendNotification({
             method: "notifications/progress",
             params: {
               progressToken,
@@ -469,7 +485,8 @@ class NotebookLMMCPServer {
 
       try {
         await this.toolHandlers.cleanup();
-        await this.server.close();
+        await this.httpTransport?.close();
+        await Promise.all([...this.servers].map((server) => server.close()));
         log.success("✅ Shutdown complete");
         clearTimeout(watchdog);
         process.exit(0);
@@ -517,21 +534,22 @@ class NotebookLMMCPServer {
     log.info("");
 
     if (options.kind === "http") {
-      await startHttpTransport({
+      this.httpTransport = await startHttpTransport({
         port: options.port,
         host: options.host,
+        authToken: options.authToken,
         connect: async (transport) => {
-          await this.server.connect(transport);
+          await this.createMcpServer().connect(transport);
         },
       });
       log.success("✅ MCP Server connected via Streamable HTTP");
     } else {
       const transport = new StdioServerTransport();
-      await this.server.connect(transport);
+      await this.createMcpServer().connect(transport);
       log.success("✅ MCP Server connected via stdio");
     }
 
-    log.success("🎉 Ready to receive requests from Claude Code!");
+    log.success("🎉 Ready to receive MCP requests!");
     log.info("");
     log.info("💡 Available tools:");
     for (const tool of this.toolDefinitions) {
@@ -544,7 +562,9 @@ class NotebookLMMCPServer {
   }
 }
 
-type TransportOptions = { kind: "stdio" } | { kind: "http"; port: number; host?: string };
+type TransportOptions =
+  | { kind: "stdio" }
+  | { kind: "http"; port: number; host?: string; authToken?: string };
 
 function parseTransportOptions(argv: readonly string[]): TransportOptions {
   let kind: "stdio" | "http" = "stdio";
@@ -593,8 +613,10 @@ function parseTransportOptions(argv: readonly string[]): TransportOptions {
   }
   const envHost = process.env.NOTEBOOKLM_HOST;
   if (envHost) host = envHost;
+  // Env-only on purpose: a CLI flag would leak the secret into `ps` and shell history.
+  const authToken = process.env.NOTEBOOKLM_HTTP_TOKEN?.trim() || undefined;
 
-  if (kind === "http") return { kind, port, host };
+  if (kind === "http") return { kind, port, host, authToken };
   return { kind: "stdio" };
 }
 
@@ -618,6 +640,13 @@ async function main() {
     applyAccountToConfig(CONFIG, account);
     ensureDirectories();
     log.info(`👤 Account profile active: ${account}`);
+  }
+
+  // One-time interactive Google login without an MCP client. Hosts with short
+  // tool-call timeouts (ChatGPT: ~60 s) cannot wait out a login via setup_auth.
+  if (args[0] === "auth") {
+    const ok = await new AuthManager().performSetup();
+    process.exit(ok ? 0 : 1);
   }
 
   // Print banner

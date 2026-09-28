@@ -20,7 +20,7 @@ export function buildAskQuestionDescription(library: NotebookLibrary): string {
 **Content:** ${active.description}
 **Topics:** ${topics}
 
-> Auth tip: If login is required, use the prompt 'notebooklm.auth-setup' and then verify with the 'get_health' tool. If authentication later fails (e.g., expired cookies), use the prompt 'notebooklm.auth-repair'.
+> Auth tip: If login is required, call the 'setup_auth' tool and then verify with the 'get_health' tool. If authentication later fails (e.g., expired cookies), call 're_auth'.
 
 ## What This Tool Is
 - Full conversational research with Gemini (LLM) grounded on your notebook sources
@@ -36,7 +36,7 @@ ${useCases}
 - Ask clarifying questions before implementing; do not guess missing details
 - If multiple notebooks could apply, propose the top 1–2 and ask which to use
 - If task context changes, ask to reset the session or switch notebooks
-- If authentication fails, use the prompts 'notebooklm.auth-repair' (or 'notebooklm.auth-setup') and verify with 'get_health'
+- If authentication fails, call 're_auth' (or 'setup_auth' on first use) and verify with 'get_health'
 - After every NotebookLM answer: pause, compare with the user's goal, and only respond if you are 100% sure the information is complete. Otherwise, plan the next NotebookLM question in the same session.
 
 ## Session Flow (Recommended)
@@ -105,7 +105,7 @@ ${bt}${bt}${bt}
 - Use **list_notebooks** to show available sources
 - Use **select_notebook** to set one active
 
-> Auth tip: If login is required, use the prompt 'notebooklm.auth-setup' and then verify with the 'get_health' tool. If authentication later fails (e.g., expired cookies), use the prompt 'notebooklm.auth-repair'.
+> Auth tip: If login is required, call the 'setup_auth' tool and then verify with the 'get_health' tool. If authentication later fails (e.g., expired cookies), call 're_auth'.
 
 Tip: Tell the user you can manage NotebookLM library and ask which notebook to use for the current task.`;
   }
@@ -168,8 +168,8 @@ export const askQuestionTool: Tool = {
       browser_options: {
         type: "object",
         description:
-          "Optional browser behavior settings. Claude can control everything: " +
-          "visibility, typing speed, stealth mode, timeouts. Useful for debugging or fine-tuning.",
+          "Optional browser behavior settings: visibility, typing speed, stealth mode, " +
+          "timeouts. Useful for debugging or fine-tuning.",
         properties: {
           show: {
             type: "boolean",
