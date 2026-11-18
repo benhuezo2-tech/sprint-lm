@@ -21,11 +21,31 @@ import path from "path";
 const paths = envPaths("notebooklm-mcp", { suffix: "" });
 
 /**
+ * Hosts that serve the NotebookLM app.
+ *
+ * Google renamed NotebookLM to "Gemini Notebook" (July 2026) and
+ * `notebooklm.google.com` now answers with a 301 to `notebook.google.com`.
+ * After that redirect `page.url()` reports the new host, so every
+ * "are we on NotebookLM?" check must accept both.
+ */
+export const NOTEBOOKLM_HOSTS: readonly string[] = ["notebook.google.com", "notebooklm.google.com"];
+
+/** True when `url` is an https page on one of the NotebookLM hosts (any path). */
+export function isNotebookLmUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && NOTEBOOKLM_HOSTS.includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Google NotebookLM Auth URL (used by setup_auth)
  * This is the base Google login URL that redirects to NotebookLM
  */
 export const NOTEBOOKLM_AUTH_URL =
-  "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fnotebooklm.google.com%2F&flowName=GlifWebSignIn&flowEntry=ServiceLogin";
+  "https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fnotebook.google.com%2F&flowName=GlifWebSignIn&flowEntry=ServiceLogin";
 
 export interface Config {
   // NotebookLM - optional, used for legacy default notebook

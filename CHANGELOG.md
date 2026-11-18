@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Login detection after the "Gemini Notebook" rename.** `notebooklm.google.com`
+  now answers with a 301 to `notebook.google.com`, so `setup_auth` and
+  re-auth never saw a URL starting with the old host and timed out after a
+  successful login. Host checks now go through `isNotebookLmUrl()`
+  (`src/config.ts`), which accepts both hosts and rejects look-alikes such
+  as `notebook.google.com.evil.com`. The login `continue=` target and tool
+  descriptions point at the new host; legacy links still work.
+
 ## [2.0.0] - 2026-04-30
 
 Major release that closes the issue backlog and replaces the brittle parts of

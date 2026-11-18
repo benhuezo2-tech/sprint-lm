@@ -23,7 +23,7 @@
  *      breaks if a locale is missing because the class/icon anchors fire
  *      first.
  *
- * Last verified: 2026-05 against the live notebooklm.google.com layout
+ * Last verified: 2026-05 against the live notebooklm.google.com layout (host is now notebook.google.com; DOM not re-verified since)
  * (DE, EN locales).
  */
 
@@ -313,7 +313,7 @@ export const Selectors = {
      * contains the Download item.
      */
     audioMoreMenuButton: [
-      "artifact-library-item button:has(mat-icon:text-is(\"more_vert\"))",
+      'artifact-library-item button:has(mat-icon:text-is("more_vert"))',
       'artifact-library-item button[aria-label*="mehr" i]',
       'artifact-library-item button[aria-label*="more" i]',
       'artifact-library-item button[aria-label*="plus" i]',
